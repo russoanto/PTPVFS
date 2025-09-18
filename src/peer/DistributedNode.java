@@ -1,0 +1,286 @@
+package peer;
+
+import shared.FileSystemInterface;
+import shared.fs.FileSystem;
+
+import java.rmi.RemoteException;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
+import java.rmi.server.UnicastRemoteObject;
+import java.util.*;
+
+public class DistributedNode extends UnicastRemoteObject implements FileSystemInterface {
+    private final String name;
+    private final String host;
+    private final int port;
+    private final FileSystem localFs;
+    private final Map<String, Neighbor> neighbors = new HashMap<>();
+
+    public DistributedNode(String name, String host, int port, String dataDir) throws RemoteException {
+        super();
+        this.name = name;
+        this.host = host;
+        this.port = port;
+        this.localFs = FileSystem.mount(dataDir);
+    }
+
+    // ===== Base FS ops =====
+
+    @Override
+    public boolean mkdir(String path) throws RemoteException {
+        return localFs.mkdir(path);
+    }
+
+    @Override
+    public boolean mknod(String path) throws RemoteException {
+        return localFs.mknod(path);
+    }
+
+    @Override
+    public boolean symlink(String target, String linkPath) throws RemoteException {
+        return localFs.symlink(target, linkPath);
+    }
+
+    // ===== WRITE =====
+    @Override
+    public boolean write(String path, byte[] content) throws RemoteException {
+        return writeWithVisited(path, content, new ArrayList<>());
+    }
+
+    @Override
+    public boolean writeWithVisited(String path, byte[] content, List<String> visited) throws RemoteException {
+        if (visited.contains(this.name)) return false;
+        visited.add(this.name);
+
+        if (localFs.lookup(path) != null) {
+            return localFs.write(path, content);
+        }
+
+        for (Neighbor n : neighbors.values()) {
+            try {
+                Registry reg = LocateRegistry.getRegistry(n.getAddress(), n.getPort());
+                FileSystemInterface stub = (FileSystemInterface) reg.lookup(n.getName());
+                if (stub.writeWithVisited(path, content, new ArrayList<>(visited))) return true;
+            } catch (Exception ignored) {}
+        }
+        return false;
+    }
+
+    // ===== READ =====
+    @Override
+    public byte[] read(String path) throws RemoteException {
+        return readWithVisited(path, new ArrayList<>());
+    }
+
+    @Override
+    public byte[] readWithVisited(String path, List<String> visited) throws RemoteException {
+        if (visited.contains(this.name)) return null;
+        visited.add(this.name);
+
+        byte[] data = localFs.read(path);
+        if (data != null) return data;
+
+        for (Neighbor n : neighbors.values()) {
+            try {
+                Registry reg = LocateRegistry.getRegistry(n.getAddress(), n.getPort());
+                FileSystemInterface stub = (FileSystemInterface) reg.lookup(n.getName());
+                byte[] res = stub.readWithVisited(path, new ArrayList<>(visited));
+                if (res != null) return res;
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+    // ===== RENAME =====
+    @Override
+    public boolean rename(String oldPath, String newPath) throws RemoteException {
+        return renameWithVisited(oldPath, newPath, new ArrayList<>());
+    }
+
+    @Override
+    public boolean renameWithVisited(String oldPath, String newPath, List<String> visited) throws RemoteException {
+        if (visited.contains(this.name)) return false;
+        visited.add(this.name);
+
+        if (localFs.lookup(oldPath) != null) {
+            return localFs.rename(oldPath, newPath);
+        }
+
+        for (Neighbor n : neighbors.values()) {
+            try {
+                Registry reg = LocateRegistry.getRegistry(n.getAddress(), n.getPort());
+                FileSystemInterface stub = (FileSystemInterface) reg.lookup(n.getName());
+                if (stub.renameWithVisited(oldPath, newPath, new ArrayList<>(visited))) return true;
+            } catch (Exception ignored) {}
+        }
+        return false;
+    }
+    // ========= Tournament-like Join/Leave =========
+    public void joinNetwork(String bootstrapName, String bootstrapHost, int bootstrapPort) {
+        try {
+            Registry reg = LocateRegistry.getRegistry(bootstrapHost, bootstrapPort);
+            FileSystemInterface stub = (FileSystemInterface) reg.lookup(bootstrapName);
+
+            // aggiungi bootstrap
+            this.addNeighbor(bootstrapName, bootstrapHost, bootstrapPort);
+
+            // scarica tutti i vicini del bootstrap
+            for (String entry : stub.getNeighbors()) {
+                String[] tk = entry.split(":");
+                String neighName = tk[0];
+                String neighHost = tk[1];
+                int neighPort = Integer.parseInt(tk[2]);
+
+                if (neighName.equals(this.name)) continue;
+
+                this.addNeighbor(neighName, neighHost, neighPort);
+
+                try {
+                    Registry neighReg = LocateRegistry.getRegistry(neighHost, neighPort);
+                    FileSystemInterface neighStub = (FileSystemInterface) neighReg.lookup(neighName);
+                    neighStub.addNeighbor(this.name, this.host, this.port);
+                } catch (Exception e) {
+                    System.err.println("Errore contattando " + neighName + ": " + e.getMessage());
+                }
+            }
+
+            // fatti aggiungere anche dal bootstrap
+            stub.addNeighbor(this.name, this.host, this.port);
+
+            System.out.println("Join completato con " + bootstrapName + "@" + bootstrapHost + ":" + bootstrapPort);
+
+        } catch (Exception e) {
+            System.err.println("Join fallito: " + e.getMessage());
+        }
+    }
+
+    public void leaveNetwork() {
+        for (Neighbor n : new ArrayList<>(neighbors.values())) {
+            try {
+                Registry reg = LocateRegistry.getRegistry(n.getAddress(), n.getPort());
+                FileSystemInterface stub = (FileSystemInterface) reg.lookup(n.getName());
+                stub.removeNeighbor(this.name);
+            } catch (Exception e) {
+                System.err.println("Errore durante leave con " + n.getName() + ": " + e.getMessage());
+            }
+        }
+        neighbors.clear();
+        System.out.println("Node " + this.name + " ha lasciato la rete.");
+    }
+
+    // ===== READDIR =====
+    @Override
+    public List<String> readdir(String path) throws RemoteException {
+        return readdirWithVisited(path, new ArrayList<>());
+    }
+
+    @Override
+    public List<String> readdirWithVisited(String path, List<String> visited) throws RemoteException {
+        if (visited.contains(this.name)) return new ArrayList<>();
+        visited.add(this.name);
+
+        Set<String> entries = new HashSet<>();
+        try {
+            List<String> local = localFs.readdir(path);
+            if (local != null) entries.addAll(local);
+        } catch (Exception ignored) {}
+
+        for (Neighbor n : neighbors.values()) {
+            try {
+                Registry reg = LocateRegistry.getRegistry(n.getAddress(), n.getPort());
+                FileSystemInterface stub = (FileSystemInterface) reg.lookup(n.getName());
+                entries.addAll(stub.readdirWithVisited(path, new ArrayList<>(visited)));
+            } catch (Exception ignored) {}
+        }
+        return new ArrayList<>(entries);
+    }
+
+    // ===== GETATTR =====
+    @Override
+    public Map<String, Object> getattr(String path) throws RemoteException {
+        return getattrWithVisited(path, new ArrayList<>());
+    }
+
+    @Override
+    public Map<String, Object> getattrWithVisited(String path, List<String> visited) throws RemoteException {
+        if (visited.contains(this.name)) return null;
+        visited.add(this.name);
+
+        Map<String, Object> attr = localFs.getattr(path);
+        if (attr != null) return attr;
+
+        for (Neighbor n : neighbors.values()) {
+            try {
+                Registry reg = LocateRegistry.getRegistry(n.getAddress(), n.getPort());
+                FileSystemInterface stub = (FileSystemInterface) reg.lookup(n.getName());
+                attr = stub.getattrWithVisited(path, new ArrayList<>(visited));
+                if (attr != null) return attr;
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+    // ===== LOCATE =====
+    @Override
+    public String locate(String file) throws RemoteException {
+        return locateWithVisited(file, new ArrayList<>());
+    }
+
+    @Override
+    public String locateWithVisited(String file, List<String> visited) throws RemoteException {
+        if (visited.contains(this.name)) return "not found";
+        visited.add(this.name);
+
+        if (localFs.lookup(file) != null) return this.name;
+
+        for (Neighbor n : neighbors.values()) {
+            try {
+                Registry reg = LocateRegistry.getRegistry(n.getAddress(), n.getPort());
+                FileSystemInterface stub = (FileSystemInterface) reg.lookup(n.getName());
+                String res = stub.locateWithVisited(file, new ArrayList<>(visited));
+                if (!"not found".equals(res)) return res;
+            } catch (Exception ignored) {}
+        }
+        return "not found";
+    }
+
+    // ===== Membership =====
+    @Override
+    public void addNeighbor(String name, String host, int port) throws RemoteException {
+        if (this.name.equals(name)) return;
+        neighbors.put(name, new Neighbor(name, host, port));
+        System.out.println("Neighbor added: " + name + "@" + host + ":" + port);
+    }
+
+    @Override
+    public void removeNeighbor(String name) throws RemoteException {
+        neighbors.remove(name);
+        System.out.println("Neighbor removed: " + name);
+    }
+
+    @Override
+    public List<String> getNeighbors() throws RemoteException {
+        List<String> out = new ArrayList<>();
+        for (Neighbor n : neighbors.values()) {
+            out.add(n.getName() + ":" + n.getAddress() + ":" + n.getPort());
+        }
+        return out;
+    }
+
+    // ===== Startup =====
+    public void start() throws Exception {
+        Registry reg;
+        try {
+            reg = LocateRegistry.createRegistry(port);
+        } catch (Exception e) {
+            reg = LocateRegistry.getRegistry(port);
+        }
+        reg.rebind(name, this);
+        System.out.println("Node " + name + " ready @ " + host + ":" + port);
+    }
+
+    // === Getter utili ===
+    public String getName() { return name; }
+    public String getHost() { return host; }
+    public int getPort() { return port; }
+}
