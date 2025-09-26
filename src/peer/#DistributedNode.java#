@@ -116,7 +116,7 @@ public class DistributedNode extends UnicastRemoteObject implements FileSystemIn
         return false;
     }
     
-    // ========= Tournament-like Join/Leave =========
+    // ========= Tournament-like JoinMF/Leave =========
     public void joinNetwork(String bootstrapName, String bootstrapHost, int bootstrapPort) {
         try {
             Registry reg = LocateRegistry.getRegistry(bootstrapHost, bootstrapPort);

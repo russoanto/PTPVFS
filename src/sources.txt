@@ -1,5 +1,4 @@
 shared/FileSystemInterface.java
-shared/MembershipService.java
 shared/fs/DirNode.java
 shared/fs/FileNode.java
 shared/fs/FileSystem.java
@@ -8,18 +7,16 @@ shared/fs/SymNode.java
 peer/DistributedNode.java
 peer/Neighbor.java
 peer/PeerMain.java
-peer/RandomLinkFailure.java
 peer/DistributedFSClient.java
-./TestConcurrentWrite.java
 ./peer/DistributedNode.java
 ./peer/Neighbor.java
 ./peer/PeerMain.java
-./peer/RandomLinkFailure.java
 ./peer/DistributedFSClient.java
 ./shared/FileSystemInterface.java
-./shared/MembershipService.java
 ./shared/fs/DirNode.java
 ./shared/fs/FileNode.java
 ./shared/fs/FileSystem.java
 ./shared/fs/Node.java
 ./shared/fs/SymNode.java
+./test/RandomLinkFailure.java
+./test/TestConcurrentWrite.java
