@@ -140,13 +140,16 @@ public class FileSystem {
     }
 
     public boolean createNode(String path, String type, String symlinkTarget) {
+        ReentrantReadWriteLock lock = getLock(path);
+        lock.writeLock().lock();
         String[] parts = tokenize(path);
         String name = parts[parts.length - 1];
         DirectoryNode parent = (DirectoryNode) resolveParent(path);
-        if (parent == null || parent.children.containsKey(name)) return false;
+        try{
+            if (parent == null || parent.children.containsKey(name)) return false;
 
-        Node node;
-        switch (type) {
+            Node node;
+            switch (type) {
             case "file":
                 node = new FileNode(name);
                 break;
@@ -158,36 +161,39 @@ public class FileSystem {
                 break;
             default:
                 return false;
-        }
-
-        node.parent = parent;
-        parent.children.put(name, node);
-
-        // write-through su disco
-        if (writeThrough && mountedRoot != null) {
-            try {
-                Path rp = realPath(path);
-                if (node instanceof DirectoryNode) {
-                    Files.createDirectories(rp);
-                } else if (node instanceof FileNode) {
-                    if (rp.getParent() != null) Files.createDirectories(rp.getParent());
-                    if (!Files.exists(rp)) Files.createFile(rp);
-                } else if (node instanceof SymlinkNode) {
-                    if (rp.getParent() != null) Files.createDirectories(rp.getParent());
-                    try {
-                        Path target = Paths.get(((SymlinkNode) node).readLink());
-                        Files.createSymbolicLink(rp, target);
-                    } catch (UnsupportedOperationException ex) {
-                        System.err.println("Symlink non supportato o richiede privilegi: " + ex.getMessage());
-                    }
-                }
-            } catch (IOException e) {
-                System.err.println("createNode write-through failed for " + path + ": " + e.getMessage());
-                // opzionale: rollback in-mem
             }
-        }
 
-        return true;
+            node.parent = parent;
+            parent.children.put(name, node);
+
+            // write-through su disco
+            if (writeThrough && mountedRoot != null) {
+                try {
+                    Path rp = realPath(path);
+                    if (node instanceof DirectoryNode) {
+                        Files.createDirectories(rp);
+                    } else if (node instanceof FileNode) {
+                        if (rp.getParent() != null) Files.createDirectories(rp.getParent());
+                        if (!Files.exists(rp)) Files.createFile(rp);
+                    } else if (node instanceof SymlinkNode) {
+                        if (rp.getParent() != null) Files.createDirectories(rp.getParent());
+                        try {
+                            Path target = Paths.get(((SymlinkNode) node).readLink());
+                            Files.createSymbolicLink(rp, target);
+                        } catch (UnsupportedOperationException ex) {
+                            System.err.println("Symlink non supportato o richiede privilegi: " + ex.getMessage());
+                        }
+                    }
+                } catch (IOException e) {
+                    System.err.println("createNode write-through failed for " + path + ": " + e.getMessage());
+                    // opzionale: rollback in-mem
+                }
+            }
+
+            return true;
+        } finally{
+            lock.writeLock().unlock();
+        }
     }
 
     public DirectoryNode resolveParent(String path) {
