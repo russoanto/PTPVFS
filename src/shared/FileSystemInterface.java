@@ -24,9 +24,15 @@ public interface FileSystemInterface extends Remote {
     List<String> readdirWithVisited(String path, List<String> visited) throws RemoteException;
     Map<String, Object> getattrWithVisited(String path, List<String> visited) throws RemoteException;
     String locateWithVisited(String file, List<String> visited) throws RemoteException;
-
+    boolean mkdirWithVisited(String path , List<String> visited) throws RemoteException;
+    boolean mknodWithVisited(String path, List<String> visited) throws RemoteException;
     // === Membership
     void addNeighbor(String name, String host, int port) throws RemoteException;
     void removeNeighbor(String name) throws RemoteException;
     List<String> getNeighbors() throws RemoteException;
+
+    // === Utils
+    List<String> listAllPaths() throws RemoteException;
+    boolean pathExistsWithVisited(String path, java.util.List<String> visited) throws java.rmi.RemoteException;
+
 }
