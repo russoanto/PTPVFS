@@ -1,15 +1,148 @@
-#+title: Peer To Peer Distributed File Sistem
-#+author: Russo Antonio
+#+TITLE: SRS - Peer-to-Peer Distributed File System
+#+AUTHOR: Russo Antonio
+#+DATE: 2025-09-26
 
 * Introduzione
-Il *Peer To Peer* distributed file system è un progetto che implementa un file system distribuito secondo un modello *peer-to-peer*.
-l'idea di base è avere diversi peer che possano agire sia come "client che come server".
-- ~server~
-  ogni peer può espore un porprio "file sysetm" locale all'intera rete (vengono eseposte anche le api per poterci interagire)
-- ~client~
-  un peer ha le capacità di poter utilizzare le api esposte dagli altri peer per poter interagire, oltre che con il proprio file system locale, anche con quelli esposti dagli altri peer.
-Il PTPVFS offre funzionalità classiche di un file system (creazione, lettura, scrittura, navigazione) e introduce una politica di *write-through*, che assicura che ogni modifica in memoria venga immediatamente riflessa anche sul file system reale montato sul peer di riferimento.
-* Architettura
-L'architettura segue il modello *peer-to-peer*, quindi decentralizzato:
-- *FileSystem*: cuore del sistema, un file system virtuale in memoria strutturato come un albero. Ogni nodo può rappresentare directory, file o symlink. Le operazioni in memoria vengono sincronizzate su disco tramite write-through.
-- *PeerMain*: 
+** Scopo
+Questo documento definisce i requisiti del sistema di File System
+Distribuito Peer-to-Peer (P2P FS). Il sistema consente la gestione di file
+e directory su più nodi collegati in rete, con accesso trasparente tramite
+API remote. Ogni nodo (peer) agisce sia come server che come client.
+
+** Obiettivi
+- Accesso uniforme ai file, sia locali che remoti, tramite RMI.
+- Replica e condivisione dei dati tra peer.
+- Operazioni tipiche di un file system: creazione, lettura, scrittura,
+  cancellazione, link simbolici e gestione attributi.
+- Robustezza: il fallimento di un peer non blocca l’intera rete.
+
+** Attori
+- *Utente*: interagisce tramite il client a riga di comando
+  =FileSystemClient=.
+- *Peer*: nodo che ospita un’istanza di file system distribuito e un
+  server RMI.
+- *Rete P2P*: insieme dei peer connessi che replicano ed espongono le API.
+
+* Descrizione generale
+** Architettura
+Il sistema adotta un modello a **grafo completo** per rappresentare la rete dei peer.
+Ogni nodo mantiene una connessione diretta con tutti gli altri peer della rete.
+In questo modo, le operazioni di ricerca e inoltro richieste non richiedono salti multipli,
+ma ogni nodo può interrogare direttamente i suoi vicini.
+*** Vantaggi
+- *Bassa latenza*: le richieste raggiungono il peer interessato in un solo hop.
+- *Semplicità di implementazione*: non servono algoritmi complessi di routing.
+  direttamente tra loro senza ricalcolare percorsi alternativi.
+*** Svantaggi
+- *Scalabilità limitata*: ogni nuovo peer deve stabilire connessioni con tutti gli altri,
+  portando a un numero di connessioni pari a O(n²).
+- *Overhead di gestione*: l’aggiunta o rimozione di un peer comporta l’aggiornamento delle
+  tabelle dei vicini in tutti i nodi.
+- *Consumo di memoria e risorse*: all’aumentare del numero di peer crescono le risorse
+  necessarie per mantenere la lista dei vicini.
+** Peer
+- Ogni peer possiede un =FileSystem= montato su una root reale del disco.
+- Il peer espone un server RMI (=FileSystemServer=) che pubblica un oggetto
+  remoto (=RemoteFileSystem=) conforme a =FileSystemInterface=.
+- I client (=FileSystemClient=) invocano operazioni sui peer remoti come se
+  fossero locali.
+*** Inserimento di un nuovo peer
+L’aggiunta di un nuovo nodo avviene tramite la procedura =joinNetwork=:
+1. Il nuovo peer contatta un nodo bootstrap noto (specificato all’avvio).
+2. Il bootstrap fornisce al nuovo nodo la lista dei vicini esistenti.
+3. Il nuovo peer stabilisce connessioni con ciascun nodo della lista.
+4. In parallelo, ciascun vicino aggiorna la propria tabella aggiungendo il nuovo peer.
+5. Durante il join viene effettuato un *controllo di integrità*: si verifica che non ci
+   siano conflitti di path già esistenti nei file system dei nodi coinvolti.
+6. Se il controllo ha successo, il nodo viene accettato e partecipa a pieno titolo al
+   grafo completo.
+In questo modo, la rete rimane sempre connessa e coerente, garantendo che ogni operazione
+possa essere inoltrata a qualsiasi nodo remoto senza ambiguità.
+[[./img/join.png]]
+
+
+** Vincoli
+- Linguaggio: Java 17+
+- Comunicazione: Java RMI
+- Persistenza: write-through su file system locale
+- Concorrenza: lock tramite =ReentrantReadWriteLock=
+- Sicurezza: protezione da path traversal
+
+* Requisiti funzionali
+** Operazioni principali (API esposte)
+*** Creazione
+Le operazioni di creazione seguono il seguente pattern
+1. Il client remoto invia una richiesta remota (es. mknod /path/file_name)
+2. Se il path è presente localmente allora il file viene creato utilizzando la primitiva offerta dal file system locale.
+3. Se il path non esiste localmente allora la richiesta viene inoltrata ricorsivamente ad un peer remoto.
+4. FileSystem acquisisce il lock, aggiorna lo stato in memoria e riflette la modifica su disco locale del peer specificato.
+5. Il risultato viene restituito al client.
+Questa logica garantisce che ogni operazione possa essere eseguita
+in maniera trasparente, sia che il path risieda in locale che in remoto.
+- ~mkdir(path)~: Creazione di una  directory
+[[./img/mkdir.png]]
+- ~mknod(path)~: Creazione di un  file
+[[./img/mknod.png]]
+
+**** Consistenza
+la consistenza è garantita grazie ai seguenti passi
+1. Verifica che il nodo da creare (directory, file, symlink) non siano già presenti in locale
+   1. Creo il nodo
+2. Controllo di integrità ~globale~ del path (il nome file non deve essere presente in nessun peer con lo stesso path)
+   1. Se il path già esiste allora genero un errore specificando che il file/dir esiste già nel path specificato
+3. Se il path (parent) esiste localmente allora gli dò prioorità e lo creo
+4. Se il parent esiste in remoto → delego la creazione al peer che lo possiede
+5. Se nessuno ha il parent allora l'operazione fallisce con la generazione di un errore
+
+*** Manipolazione
+Le operazioni di manipolazione (scrittura, lettura, rinomina, ecc.) seguono tutte
+un flusso generale comune, basato su tre fasi principali:
+
+1. **Controllo locale**
+   Ogni peer controlla prima se il path richiesto è presente nel proprio
+   =FileSystem= locale.
+   - Se il file o la directory esiste, l’operazione viene eseguita direttamente
+     in locale, sfruttando i meccanismi di lock e il write-through su disco.
+   - Le scritture avvengono in maniera atomica e consistente grazie a
+     =ReentrantReadWriteLock=, garantendo che le letture concorrenti
+     non entrino in conflitto.
+
+2. **Inoltro ai vicini (propagazione remota)**
+   Se il path non è presente localmente, il peer inoltra la richiesta
+   ai vicini conosciuti.
+   Ogni chiamata include una lista *visited* per evitare cicli infiniti:
+   se un peer è già stato visitato nella catena della richiesta, la
+   invocazione viene ignorata.
+   In questo modo la ricerca termina sempre, anche in presenza di cicli.
+
+3. **Risoluzione e risposta**
+   - Se un peer remoto trova il path, esegue l’operazione e restituisce
+     il risultato (contenuto letto, conferma di scrittura, lista directory, ecc.).
+   - Se nessun peer possiede il path, l’operazione fallisce e viene restituito
+     un valore di errore.
+Questa logica garantisce che ogni operazione possa essere eseguita
+in maniera trasparente, sia che il path risieda in locale che in remoto.
+
+- =write(path, content)=: scrive su file (locale o remoto)
+  [[./img/write.png]]
+- =read(path)=: legge contenuto file (locale o remoto)
+  [[./img/read.png]]
+- =rename(oldPath, newPath)=: rinomina file o directory (locale o remoto).
+  [[./img/rename.png]]
+**** Consistenza
+La consistenza per le operazioni di manipolazione sono garantite a livello di file system.
+
+*** Gestione Attributi
+- =readdir(path)=: lista contenuto directory (locale o remoto)
+- =getattr(path)=: metadati (locale o remoto)
+- =setattr(path, attr, value)=: modifica attributi
+
+
+** Funzionalità Client
+- Interprete comandi interattivo (mkdir, ls, read, write).
+
+* Requisiti non funzionali
+- Disponibilità: resilienza alla caduta di nodi.
+- Trasparenza: uniformità tra file locali e remoti.
+- Coerenza: propagazione aggiornamenti ai peer.
+
