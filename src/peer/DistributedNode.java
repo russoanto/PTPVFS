@@ -24,16 +24,109 @@ public class DistributedNode extends UnicastRemoteObject implements FileSystemIn
         this.localFs = FileSystem.mount(dataDir);
     }
 
+    @Override
+    public List<String> listAllPaths() throws RemoteException {
+        List<String> paths = new ArrayList<>();
+        collectPaths("/", localFs, paths);
+        return paths;
+    }
+
+    private void collectPaths(String prefix, shared.fs.FileSystem fs, List<String> paths) {
+        List<String> children = fs.readdir(prefix);
+        if (children == null) return;
+
+        for (String child : children) {
+            String fullPath = prefix.equals("/") ? "/" + child : prefix + "/" + child;
+            paths.add(fullPath);
+
+            // if directory → recurse
+            Map<String, Object> attr = fs.getattr(fullPath);
+            if (attr != null && "DirectoryNode".equals(attr.get("type"))) {
+                collectPaths(fullPath, fs, paths);
+            }
+        }
+    }
+
+
     // ===== Base FS ops =====
 
     @Override
     public boolean mkdir(String path) throws RemoteException {
-        return localFs.mkdir(path);
+        return mkdirWithVisited(path, new ArrayList<>());
+        //        return localFs.mkdir(path);
     }
+    @Override
+    public boolean mkdirWithVisited(String path , List<String> visited) throws RemoteException {
+        if (visited.contains(this.name)) return false;
+        visited.add(this.name);
+
+        // === 1. Controllo integrità globale: path non deve già esistere ===
+        if (pathExistsWithVisited(path, new ArrayList<>())) {
+            System.err.println("Integrity check failed: " + path + " già esiste in rete");
+            return false;
+        }
+
+        // === 2. Trova il parent ===
+        String parent = parentOf(path);
+        if (parent == null) return false; // root non gestita
+
+        // Se il parent esiste localmente → creo qui
+        if (localFs.lookup(parent) != null) {
+            return localFs.mkdir(path);
+        }
+
+        // Se il parent esiste in remoto → delego la creazione al peer che lo possiede
+        for (Neighbor n : neighbors.values()) {
+            try {
+                Registry reg = LocateRegistry.getRegistry(n.getAddress(), n.getPort());
+                FileSystemInterface stub = (FileSystemInterface) reg.lookup(n.getName());
+                if (stub.pathExistsWithVisited(parent, new ArrayList<>(visited))) {
+                    return stub.mkdirWithVisited(path, new ArrayList<>(visited));
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // === 3. Nessuno ha il parent → fallisce
+        return false;
+    }
+
 
     @Override
     public boolean mknod(String path) throws RemoteException {
-        return localFs.mknod(path);
+        return mknodWithVisited(path, new ArrayList<>());
+    }
+    public boolean mknodWithVisited(String path, List<String> visited) throws RemoteException{
+        if (visited.contains(this.name)) return false;
+        visited.add(this.name);
+
+        // === 1. Controllo integrità globale: path non deve già esistere ===
+        if (pathExistsWithVisited(path, new ArrayList<>())) {
+            System.err.println("Integrity check failed: " + path + " già esiste in rete");
+            return false;
+        }
+
+        // === 2. Trova il parent ===
+        String parent = parentOf(path);
+        if (parent == null) return false; // root non gestita
+
+        // Se il parent esiste localmente → creo qui
+        if (localFs.lookup(parent) != null) {
+            return localFs.mknod(path);
+        }
+
+        // Se il parent esiste in remoto → delego la creazione al peer che lo possiede
+        for (Neighbor n : neighbors.values()) {
+            try {
+                Registry reg = LocateRegistry.getRegistry(n.getAddress(), n.getPort());
+                FileSystemInterface stub = (FileSystemInterface) reg.lookup(n.getName());
+                if (stub.pathExistsWithVisited(parent, new ArrayList<>(visited))) {
+                    return stub.mknodWithVisited(path, new ArrayList<>(visited));
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // === 3. Nessuno ha il parent → fallisce
+        return false;
     }
 
     @Override
@@ -115,12 +208,23 @@ public class DistributedNode extends UnicastRemoteObject implements FileSystemIn
         }
         return false;
     }
-    
+
     // ========= Tournament-like Join/Leave =========
     public void joinNetwork(String bootstrapName, String bootstrapHost, int bootstrapPort) {
         try {
             Registry reg = LocateRegistry.getRegistry(bootstrapHost, bootstrapPort);
             FileSystemInterface stub = (FileSystemInterface) reg.lookup(bootstrapName);
+
+            // integrity check
+            List<String> bootstrapPaths = stub.listAllPaths();
+            List<String> myPaths = this.listAllPaths();
+
+            for (String p : myPaths) {
+                if (bootstrapPaths.contains(p)) {
+                    System.err.println("Vincolo di intergità violato: conflitto sul path " + p);
+                    return;
+                }
+            }
 
             // aggiungi bootstrap
             this.addNeighbor(bootstrapName, bootstrapHost, bootstrapPort);
@@ -278,6 +382,35 @@ public class DistributedNode extends UnicastRemoteObject implements FileSystemIn
         }
         reg.rebind(name, this);
         System.out.println("Node " + name + " ready @ " + host + ":" + port);
+    }
+
+    // === Utils
+    @Override
+    public boolean pathExistsWithVisited(String path, List<String> visited) throws RemoteException {
+        if (visited.contains(this.name)) return false;
+        visited.add(this.name);
+
+
+        if (localFs.lookup(path) != null) return true;
+
+
+        for (Neighbor n : neighbors.values()) {
+            try {
+                Registry reg = LocateRegistry.getRegistry(n.getAddress(), n.getPort());
+                FileSystemInterface stub = (FileSystemInterface) reg.lookup(n.getName());
+                if (stub.pathExistsWithVisited(path, new ArrayList<>(visited))) {
+                    return true;
+                }
+            } catch (Exception ignored) {}
+        }
+        return false;
+    }
+
+    private String parentOf(String path) {
+        if (path == null || path.isEmpty() || "/".equals(path)) return null; // la root non ha padre
+        int i = path.lastIndexOf('/');
+        if (i <= 0) return "/";                 // "/name" → "/"
+        return path.substring(0, i);             // "/a/b" → "/a"
     }
 
     // === Getter utili ===
