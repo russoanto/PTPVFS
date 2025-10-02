@@ -3,10 +3,10 @@ package shared.fs;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;                  
-import java.nio.file.Paths;                
-import java.nio.file.StandardCopyOption;   
-import java.nio.file.StandardOpenOption;   
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.List;
@@ -307,7 +307,7 @@ public class FileSystem {
         Node victim = parent.children.get(name);
         if (victim == null) return false;
 
-        // ⬇️ write-through: elimina su disco prima
+      
         if (writeThrough && mountedRoot != null) {
             try {
                 Path rp = realPath(path);

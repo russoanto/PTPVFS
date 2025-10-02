@@ -4,14 +4,14 @@ shared/fs/FileNode.java
 shared/fs/FileSystem.java
 shared/fs/Node.java
 shared/fs/SymNode.java
+peer/DistributedFSClient.java
 peer/DistributedNode.java
 peer/Neighbor.java
 peer/PeerMain.java
-peer/DistributedFSClient.java
+./peer/DistributedFSClient.java
 ./peer/DistributedNode.java
 ./peer/Neighbor.java
 ./peer/PeerMain.java
-./peer/DistributedFSClient.java
 ./shared/FileSystemInterface.java
 ./shared/fs/DirNode.java
 ./shared/fs/FileNode.java

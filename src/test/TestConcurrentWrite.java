@@ -14,9 +14,9 @@ public class TestConcurrentWrite {
                 new Thread(() -> {
                     try {
                         String content = "Hello from client " + finalI;
-                        System.out.println("✍️  Client " + finalI + " writing...");
+                        System.out.println("Client " + finalI + " writing...");
                         fs.write("/shared.txt", content.getBytes());
-                        System.out.println("✅ Client " + finalI + " wrote.");
+                        System.out.println("Client " + finalI + " wrote.");
                     } catch (Exception e) {
                         e.printStackTrace();
                     }
