@@ -18,13 +18,13 @@ Un client (`DistributedFSClient`) permette di interagire da terminale con un pee
 Per compilare tutti i sorgenti:
 
 ```bash
-./compile.bash
+bash compile.bash
 ```
 
 Per pulire i file compilati:
 
 ```bash
-./clean.bash
+bash clean.bash
 ```
 
 ---
@@ -36,13 +36,13 @@ Sono forniti degli script di utilità per avviare i nodi.
 ### Avvio del primo nodo (leader)
 
 ```bash
-./run-leader.sh <name> <host> <port> <dataDir>
+bash run-leader.sh <name> <host> <port>
 ```
 
 Esempio:
 
 ```bash
-./run-leader.sh A localhost 1099 ./dataA
+bash run-leader.sh A localhost 1099 
 ```
 
 Questo crea il primo peer della rete (senza bootstrap).
@@ -50,13 +50,13 @@ Questo crea il primo peer della rete (senza bootstrap).
 ### Avvio di un peer che si unisce a un leader
 
 ```bash
-./run-peer.sh <name> <host> <port> <dataDir> <bootstrapName:bootstrapHost:bootstrapPort>
+bash run-peer.sh <name> <host> <port> <bootstrapName bootstrapPort>
 ```
 
 Esempio:
 
 ```bash
-./run-peer.sh B localhost 1100 ./dataB A:localhost:1099
+bash run-peer.sh B localhost 1100 ./dataB A:localhost:1099
 ```
 
 In questo modo `B` entra nella rete del peer `A`.
@@ -68,13 +68,13 @@ In questo modo `B` entra nella rete del peer `A`.
 Per interagire con un peer in esecuzione:
 
 ```bash
-./run-client.sh <peerName> <host> <port>
+bash run-client.sh <peerName> <host> <port>
 ```
 
 Esempio:
 
 ```bash
-./run-client.sh A localhost 1099
+bash run-client.sh A localhost 1099
 ```
 
 ---
@@ -100,19 +100,19 @@ All’interno della shell interattiva puoi eseguire:
 1. Avvia un leader:
 
 ```bash
-./run-leader.sh A localhost 1099 ./dataA
+bash run-leader.sh A localhost 1099
 ```
 
 2. Avvia un altro peer con bootstrap:
 
 ```bash
-./run-peer.sh B localhost 1100 ./dataB A:localhost:1099
+bash run-peer.sh B localhost 1100  A 1099
 ```
 
 3. Connettiti al peer A:
 
 ```bash
-./run-client.sh A localhost 1099
+bash run-client.sh A localhost 1099
 ```
 
 4. Esegui comandi:
