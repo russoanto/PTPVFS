@@ -8,7 +8,7 @@ Un client (`DistributedFSClient`) permette di interagire da terminale con un pee
 
 ## Requisiti
 
-- **Java 11+**
+- **openjdk** 25.0.1 2025-09-16
 - **Bash** (per gli script `compile.bash`, `run-*.sh`)
 
 ---
